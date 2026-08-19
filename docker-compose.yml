@@ -5,6 +5,8 @@ services:
     # Image officielle MariaDB (compatible avec le provider "mysql" de Prisma).
     image: mariadb:11
     restart: unless-stopped
+    ports:
+      - "3307:3306"  # ⚠️ dev uniquement, à retirer avant la prod # 3307 côté Windows -> 3306 dans le conteneur
     environment:
       # Ces variables configurent automatiquement la base au premier démarrage.
       # Les valeurs viennent du fichier .env (créé juste après), jamais codées en dur ici.
