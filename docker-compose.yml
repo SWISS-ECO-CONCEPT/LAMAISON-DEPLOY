@@ -1,0 +1,84 @@
+# Version du format docker-compose utilisé.
+version: "3.9"
+
+services:
+
+  # ---------- Base de données ----------
+  db:
+    # Image officielle MariaDB (compatible avec le provider "mysql" de Prisma).
+    image: mariadb:11
+    restart: unless-stopped
+    environment:
+      # Ces variables configurent automatiquement la base au premier démarrage.
+      # Les valeurs viennent du fichier .env (créé juste après), jamais codées en dur ici.
+      MYSQL_ROOT_PASSWORD: ${DB_ROOT_PASSWORD}
+      MYSQL_DATABASE: ${DB_NAME}
+      MYSQL_USER: ${DB_USER}
+      MYSQL_PASSWORD: ${DB_PASSWORD}
+    volumes:
+      # Sans ce volume, toutes les données seraient perdues à chaque fois
+      # qu'on recrée le conteneur (docker compose down / up).
+      # "db_data" est un volume nommé, géré par Docker, qui survit aux redémarrages.
+      - db_data:/var/lib/mysql
+    # Pas de "ports:" ici : la base n'a pas besoin d'être accessible depuis
+    # l'extérieur, seulement depuis le service "backend" via le réseau interne.
+
+  # ---------- Backend (API) ----------
+  backend:
+    # "build" au lieu de "image" : on construit l'image depuis le Dockerfile
+    # présent dans le dossier voisin ../LAMAISON-BACKEND.
+    build:
+      context: ../LAMAISON-BACKEND
+    restart: unless-stopped
+    # On attend que "db" soit démarré avant de lancer le backend.
+    depends_on:
+      - db
+    environment:
+      # mysql://utilisateur:motdepasse@HOTE:PORT/nom_de_la_base
+      # Ici HOTE = "db", le nom du service ci-dessus (résolution DNS interne à Docker).
+      DATABASE_URL: mysql://${DB_USER}:${DB_PASSWORD}@db:3306/${DB_NAME}
+      PORT: 5000
+      CORS_ORIGIN: ${CORS_ORIGIN}
+      CLERK_SECRET_KEY: ${CLERK_SECRET_KEY}
+      CLERK_PUBLISHABLE_KEY: ${CLERK_PUBLISHABLE_KEY}
+      CLERK_WEBHOOK_SECRET: ${CLERK_WEBHOOK_SECRET}
+    ports:
+      # <port sur ta machine/serveur>:<port dans le conteneur>
+      - "5000:5000"
+    volumes:
+      # Les fichiers uploadés (photos d'annonces) doivent survivre aux
+      # redémarrages du conteneur, exactement comme la base de données.
+      - uploads_data:/app/uploads
+    # On surcharge la commande du Dockerfile : avant de démarrer le serveur,
+    # on applique les migrations Prisma en attente sur la base de données.
+    # "migrate deploy" (contrairement à "migrate dev") ne pose aucune question
+    # interactive : c'est la commande faite pour tourner en production/CI.
+    command: sh -c "npx prisma migrate deploy && npx tsx src/server.ts"
+
+  # ---------- Frontend public ----------
+  frontend:
+    build:
+      context: ../LAMAISON-FRONTEND
+      # Rappel de l'étape 3 : Vite grave ces variables DANS le JS au moment
+      # du build. Il faut donc les passer ici, pas dans "environment:".
+      args:
+        VITE_API_URL: ${PUBLIC_API_URL}
+        VITE_CLERK_PUBLISHABLE_KEY: ${CLERK_PUBLISHABLE_KEY}
+    restart: unless-stopped
+    ports:
+      - "8080:80"
+
+  # ---------- Admin (back-office) ----------
+  admin:
+    build:
+      context: ../LAMAISON-ADMIN-FRONTEND-
+      args:
+        VITE_API_URL: ${PUBLIC_API_URL}
+    restart: unless-stopped
+    ports:
+      - "8081:80"
+
+# Déclaration des volumes nommés utilisés ci-dessus.
+volumes:
+  db_data:
+  uploads_data:
